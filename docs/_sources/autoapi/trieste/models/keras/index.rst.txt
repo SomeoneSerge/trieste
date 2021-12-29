@@ -1,0 +1,113 @@
+:py:mod:`trieste.models.keras`
+==============================
+
+.. py:module:: trieste.models.keras
+
+.. autoapi-nested-parse::
+
+   This package contains the primary interface for deep neural network models. It also contains a
+   number of :class:`TrainableProbabilisticModel` wrappers for neural network models. Note that
+   currently copying/saving models is not supported, so when
+   :class:`~trieste.bayesian_optimizer.BayesianOptimizer` is used ``track_state`` should be set
+   to `False`. We recommend to set `tf.keras.backend.set_floatx(tf.float64)` for alignment with
+   the Trieste toolbox.
+
+
+
+Package Contents
+----------------
+
+.. py:class:: NeuralNetworkPredictor(optimizer: Optional[trieste.models.optimizer.BatchOptimizer] = None)
+
+   Bases: :py:obj:`trieste.models.interfaces.ProbabilisticModel`, :py:obj:`tensorflow.Module`, :py:obj:`abc.ABC`
+
+   This is an interface for trainable wrappers of TensorFlow and Keras neural network models.
+   We recommend to set `tf.keras.backend.set_floatx(tf.float64)` for alignment with the Trieste
+   toolbox.
+
+   :param optimizer: The optimizer wrapper containing the optimizer with which to train the
+       model and arguments for the wrapper and the optimizer. The optimizer must
+       be an instance of a :class:`~tf.optimizers.Optimizer`. Defaults to
+       :class:`~tf.optimizers.Adam` optimizer with default parameters.
+
+   .. py:method:: model(self) -> Union[tensorflow.keras.Model, tensorflow.Module]
+      :property:
+
+      The compiled Keras or generic TensorFlow neural network model.
+
+
+   .. py:method:: optimizer(self) -> trieste.models.optimizer.BatchOptimizer
+      :property:
+
+      The optimizer wrapper for training the model.
+
+
+   .. py:method:: predict(self, query_points: trieste.types.TensorType) -> tuple[trieste.types.TensorType, trieste.types.TensorType]
+
+      Return the mean and variance of the independent marginal distributions at each point in
+      ``query_points``.
+
+      This is essentially a convenience method for :meth:`predict_joint`, where non-event
+      dimensions of ``query_points`` are all interpreted as broadcasting dimensions instead of
+      batch dimensions, and the covariance is squeezed to remove redundant nesting.
+
+      :param query_points: The points at which to make predictions, of shape [..., D].
+      :return: The mean and variance of the independent marginal distributions at each point in
+          ``query_points``. For a predictive distribution with event shape E, the mean and
+          variance will both have shape [...] + E.
+
+
+   .. py:method:: predict_joint(self, query_points: trieste.types.TensorType) -> tuple[trieste.types.TensorType, trieste.types.TensorType]
+      :abstractmethod:
+
+      :param query_points: The points at which to make predictions, of shape [..., B, D].
+      :return: The mean and covariance of the joint marginal distribution at each batch of points
+          in ``query_points``. For a predictive distribution with event shape E, the mean will
+          have shape [..., B] + E, and the covariance shape [...] + E + [B, B].
+
+
+   .. py:method:: sample(self, query_points: trieste.types.TensorType, num_samples: int) -> trieste.types.TensorType
+      :abstractmethod:
+
+      Return ``num_samples`` samples from the independent marginal distributions at
+      ``query_points``.
+
+      :param query_points: The points at which to sample, with shape [..., N, D].
+      :param num_samples: The number of samples at each point.
+      :return: The samples. For a predictive distribution with event shape E, this has shape
+          [..., S, N] + E, where S is the number of samples.
+
+
+
+.. py:function:: get_tensor_spec_from_data(dataset: trieste.data.Dataset) -> tuple[tensorflow.TensorSpec, tensorflow.TensorSpec]
+
+   Extract tensor specifications for inputs and outputs of neural network models, based on the
+   dataset. This utility faciliates constructing neural networks, providing the required
+   dimensions for the input and the output of the network. For example
+
+   >>> data = Dataset(
+   ...     tf.constant([[0.1, 0.2], [0.3, 0.4]]),
+   ...     tf.constant([[0.5], [0.7]])
+   ... )
+   >>> input_spec, output_spec = get_tensor_spec_from_data(data)
+   >>> input_spec
+   TensorSpec(shape=(2,), dtype=tf.float32, name='query_points')
+   >>> output_spec
+   TensorSpec(shape=(1,), dtype=tf.float32, name='observations')
+
+   :param dataset: A dataset with ``query_points`` and ``observations`` tensors.
+   :return: Tensor specification objects for the ``query_points`` and ``observations`` tensors.
+   :raise ValueError: If the dataset is not an instance of :class:`~trieste.data.Dataset`.
+
+
+.. py:function:: sample_with_replacement(dataset: trieste.data.Dataset) -> trieste.data.Dataset
+
+   Create a new ``dataset`` with data sampled with replacement. This
+   function is useful for creating bootstrap samples of data for training ensembles.
+
+   :param dataset: The data that should be sampled.
+   :return: A (new) ``dataset`` with sampled data.
+   :raise ValueError (or InvalidArgumentError): If the dataset is not an instance of
+       :class:`~trieste.data.Dataset` or it is empty.
+
+
