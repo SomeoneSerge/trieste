@@ -26,6 +26,7 @@ trieste model).
 from __future__ import annotations
 
 import unittest.mock
+from time import time
 from typing import Any, cast
 
 import gpflow
@@ -49,7 +50,7 @@ from tests.util.models.gpflow.models import (
 from tests.util.models.models import fnc_2sin_x_over_3, fnc_3x_plus_10
 from trieste.data import Dataset
 from trieste.logging import step_number, tensorboard_writer
-from trieste.models import TrainableProbabilisticModel
+from trieste.models import TrainableProbabilisticModel, TrajectorySampler
 from trieste.models.config import create_model
 from trieste.models.gpflow import (
     GaussianProcessRegression,
@@ -583,6 +584,76 @@ def test_gaussian_process_regression_optimize(compile: bool) -> None:
     model.optimize(Dataset(*data))
 
     assert model.model.training_loss() < loss
+
+
+@random_seed
+@pytest.mark.parametrize("after_model_optimize", [True, False])
+@pytest.mark.parametrize("after_model_update", [True, False])
+def test_gaussian_process_cached_predictions_correct(
+    after_model_optimize: bool,
+    after_model_update: bool,
+    gpflow_interface_factory: ModelFactoryType,
+) -> None:
+    x = np.linspace(0, 5, 10).reshape((-1, 1))
+    y = fnc_2sin_x_over_3(x)
+    data = x, y
+    dataset = Dataset(*data)
+    model, _ = gpflow_interface_factory(x, y)
+
+    if isinstance(model, (VariationalGaussianProcess, SparseVariational)):  # TODO
+        pytest.skip("Cached predictions are not yet implemented for the VGP models.")
+
+    if after_model_optimize:
+        model._optimizer = BatchOptimizer(tf.optimizers.Adam(), max_iter=1)
+        model.optimize(dataset)
+
+    if after_model_update:
+        new_x = np.linspace(0, 5, 3).reshape((-1, 1))
+        new_y = fnc_2sin_x_over_3(new_x)
+        new_dataset = Dataset(new_x, new_y)
+        model.update(new_dataset)
+
+    x_predict = np.linspace(0, 5, 2).reshape((-1, 1))
+
+    # get cached predictions
+    cached_fmean, cached_fvar = model.predict(x_predict)
+    cached_joint_mean, cached_joint_var = model.predict_joint(x_predict)
+    cached_ymean, cached_yvar = model.predict_y(x_predict)
+
+    # get reference (slow) predictions from underlying model
+    reference_fmean, reference_fvar = model.model.predict_f(x_predict)
+    reference_joint_mean, reference_joint_var = model.model.predict_f(x_predict, full_cov=True)
+    reference_ymean, reference_yvar = model.model.predict_y(x_predict)
+
+    npt.assert_allclose(cached_fmean, reference_fmean)
+    npt.assert_allclose(cached_ymean, reference_ymean)
+    npt.assert_allclose(cached_joint_mean, reference_joint_mean)
+    npt.assert_allclose(cached_fvar, reference_fvar, atol=1e-5)
+    npt.assert_allclose(cached_yvar, reference_yvar, atol=1e-5)
+    npt.assert_allclose(cached_joint_var, reference_joint_var, atol=1e-5)
+    npt.assert_allclose(cached_yvar - model.get_observation_noise(), cached_fvar, atol=5e-5)
+
+
+# @random_seed
+# def test_gaussian_process_cached_predictions_faster(
+#     gpflow_interface_factory: ModelFactoryType,
+# ) -> None:
+#     x = np.linspace(0, 10, 10).reshape((-1, 1))
+#     y = fnc_2sin_x_over_3(x)
+#     model, _ = gpflow_interface_factory(x, y)
+
+#     if isinstance(model, VariationalGaussianProcess):
+#         pytest.skip("Cached predictions are not yet implemented for the VGP models.")
+
+#     x_predict = np.linspace(0, 5, 2).reshape((-1, 1))
+#     t_0 = time()
+#     [model.predict(x_predict) for _ in range(20)]  # make sequential predictions
+#     time_with_cache = time() - t_0
+#     t_0 = time()
+#     [model.model.predict_f(x_predict) for _ in range(100)]
+#     time_without_cache = time() - t_0
+
+#     npt.assert_array_less(time_with_cache, time_without_cache)
 
 
 @random_seed
